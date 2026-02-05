@@ -7,22 +7,7 @@ See documentation in docs/topics/request-response.rst
 
 from __future__ import annotations
 
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    AnyStr,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, AnyStr, TypeVar, overload
 from urllib.parse import urljoin
 
 from scrapy.exceptions import NotSupported
@@ -32,6 +17,7 @@ from scrapy.link import Link
 from scrapy.utils.trackref import object_ref
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Mapping
     from ipaddress import IPv4Address, IPv6Address
 
     from twisted.internet.ssl import Certificate
@@ -52,7 +38,7 @@ class Response(object_ref):
     downloaded (by the Downloader) and fed to the Spiders for processing.
     """
 
-    attributes: Tuple[str, ...] = (
+    attributes: tuple[str, ...] = (
         "url",
         "status",
         "headers",
@@ -65,7 +51,7 @@ class Response(object_ref):
     )
     """A tuple of :class:`str` objects containing the name of all public
     attributes of the class that are also keyword parameters of the
-    ``__init__`` method.
+    ``__init__()`` method.
 
     Currently used by :meth:`Response.replace`.
     """
@@ -74,26 +60,26 @@ class Response(object_ref):
         self,
         url: str,
         status: int = 200,
-        headers: Union[Mapping[AnyStr, Any], Iterable[Tuple[AnyStr, Any]], None] = None,
+        headers: Mapping[AnyStr, Any] | Iterable[tuple[AnyStr, Any]] | None = None,
         body: bytes = b"",
-        flags: Optional[List[str]] = None,
-        request: Optional[Request] = None,
-        certificate: Optional[Certificate] = None,
-        ip_address: Union[IPv4Address, IPv6Address, None] = None,
-        protocol: Optional[str] = None,
+        flags: list[str] | None = None,
+        request: Request | None = None,
+        certificate: Certificate | None = None,
+        ip_address: IPv4Address | IPv6Address | None = None,
+        protocol: str | None = None,
     ):
         self.headers: Headers = Headers(headers or {})
         self.status: int = int(status)
         self._set_body(body)
         self._set_url(url)
-        self.request: Optional[Request] = request
-        self.flags: List[str] = [] if flags is None else list(flags)
-        self.certificate: Optional[Certificate] = certificate
-        self.ip_address: Union[IPv4Address, IPv6Address, None] = ip_address
-        self.protocol: Optional[str] = protocol
+        self.request: Request | None = request
+        self.flags: list[str] = [] if flags is None else list(flags)
+        self.certificate: Certificate | None = certificate
+        self.ip_address: IPv4Address | IPv6Address | None = ip_address
+        self.protocol: str | None = protocol
 
     @property
-    def cb_kwargs(self) -> Dict[str, Any]:
+    def cb_kwargs(self) -> dict[str, Any]:
         try:
             return self.request.cb_kwargs  # type: ignore[union-attr]
         except AttributeError:
@@ -103,13 +89,12 @@ class Response(object_ref):
             )
 
     @property
-    def meta(self) -> Dict[str, Any]:
+    def meta(self) -> dict[str, Any]:
         try:
             return self.request.meta  # type: ignore[union-attr]
         except AttributeError:
             raise AttributeError(
-                "Response.meta not available, this response "
-                "is not tied to any request"
+                "Response.meta not available, this response is not tied to any request"
             )
 
     @property
@@ -121,14 +106,14 @@ class Response(object_ref):
             self._url: str = url
         else:
             raise TypeError(
-                f"{type(self).__name__} url must be str, " f"got {type(url).__name__}"
+                f"{type(self).__name__} url must be str, got {type(url).__name__}"
             )
 
     @property
     def body(self) -> bytes:
         return self._body
 
-    def _set_body(self, body: Optional[bytes]) -> None:
+    def _set_body(self, body: bytes | None) -> None:
         if body is None:
             self._body = b""
         elif not isinstance(body, bytes):
@@ -149,14 +134,14 @@ class Response(object_ref):
 
     @overload
     def replace(
-        self, *args: Any, cls: Type[ResponseTypeVar], **kwargs: Any
+        self, *args: Any, cls: type[ResponseTypeVar], **kwargs: Any
     ) -> ResponseTypeVar: ...
 
     @overload
     def replace(self, *args: Any, cls: None = None, **kwargs: Any) -> Self: ...
 
     def replace(
-        self, *args: Any, cls: Optional[Type[Response]] = None, **kwargs: Any
+        self, *args: Any, cls: type[Response] | None = None, **kwargs: Any
     ) -> Response:
         """Create a new Response with the same attributes except for those given new values"""
         for x in self.attributes:
@@ -197,32 +182,29 @@ class Response(object_ref):
 
     def follow(
         self,
-        url: Union[str, Link],
-        callback: Optional[CallbackT] = None,
+        url: str | Link,
+        callback: CallbackT | None = None,
         method: str = "GET",
-        headers: Union[Mapping[AnyStr, Any], Iterable[Tuple[AnyStr, Any]], None] = None,
-        body: Optional[Union[bytes, str]] = None,
-        cookies: Optional[CookiesT] = None,
-        meta: Optional[Dict[str, Any]] = None,
-        encoding: Optional[str] = "utf-8",
+        headers: Mapping[AnyStr, Any] | Iterable[tuple[AnyStr, Any]] | None = None,
+        body: bytes | str | None = None,
+        cookies: CookiesT | None = None,
+        meta: dict[str, Any] | None = None,
+        encoding: str | None = "utf-8",
         priority: int = 0,
         dont_filter: bool = False,
-        errback: Optional[Callable[[Failure], Any]] = None,
-        cb_kwargs: Optional[Dict[str, Any]] = None,
-        flags: Optional[List[str]] = None,
+        errback: Callable[[Failure], Any] | None = None,
+        cb_kwargs: dict[str, Any] | None = None,
+        flags: list[str] | None = None,
     ) -> Request:
         """
         Return a :class:`~.Request` instance to follow a link ``url``.
-        It accepts the same arguments as ``Request.__init__`` method,
-        but ``url`` can be a relative URL or a ``scrapy.link.Link`` object,
+        It accepts the same arguments as ``Request.__init__()`` method,
+        but ``url`` can be a relative URL or a :class:`~scrapy.link.Link` object,
         not only an absolute URL.
 
         :class:`~.TextResponse` provides a :meth:`~.TextResponse.follow`
         method which supports selectors in addition to absolute/relative URLs
         and Link objects.
-
-        .. versionadded:: 2.0
-           The *flags* parameter.
         """
         if encoding is None:
             raise ValueError("encoding can't be None")
@@ -250,25 +232,23 @@ class Response(object_ref):
 
     def follow_all(
         self,
-        urls: Iterable[Union[str, Link]],
-        callback: Optional[CallbackT] = None,
+        urls: Iterable[str | Link],
+        callback: CallbackT | None = None,
         method: str = "GET",
-        headers: Union[Mapping[AnyStr, Any], Iterable[Tuple[AnyStr, Any]], None] = None,
-        body: Optional[Union[bytes, str]] = None,
-        cookies: Optional[CookiesT] = None,
-        meta: Optional[Dict[str, Any]] = None,
-        encoding: Optional[str] = "utf-8",
+        headers: Mapping[AnyStr, Any] | Iterable[tuple[AnyStr, Any]] | None = None,
+        body: bytes | str | None = None,
+        cookies: CookiesT | None = None,
+        meta: dict[str, Any] | None = None,
+        encoding: str | None = "utf-8",
         priority: int = 0,
         dont_filter: bool = False,
-        errback: Optional[Callable[[Failure], Any]] = None,
-        cb_kwargs: Optional[Dict[str, Any]] = None,
-        flags: Optional[List[str]] = None,
+        errback: Callable[[Failure], Any] | None = None,
+        cb_kwargs: dict[str, Any] | None = None,
+        flags: list[str] | None = None,
     ) -> Iterable[Request]:
         """
-        .. versionadded:: 2.0
-
         Return an iterable of :class:`~.Request` instances to follow all links
-        in ``urls``. It accepts the same arguments as ``Request.__init__`` method,
+        in ``urls``. It accepts the same arguments as ``Request.__init__()`` method,
         but elements of ``urls`` can be relative URLs or :class:`~scrapy.link.Link` objects,
         not only absolute URLs.
 

@@ -13,32 +13,18 @@ from contextlib import contextmanager
 from functools import partial
 from importlib import import_module
 from pkgutil import iter_modules
-from typing import (
-    IO,
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Deque,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import IO, TYPE_CHECKING, Any, TypeVar, cast
 
 from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.item import Item
 from scrapy.utils.datatypes import LocalWeakReferencedCache
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
     from types import ModuleType
 
     from scrapy import Spider
     from scrapy.crawler import Crawler
-    from scrapy.settings import BaseSettings
 
 
 _ITERABLE_SINGLE_VALUES = dict, Item, str, bytes
@@ -54,11 +40,11 @@ def arg_to_iter(arg: Any) -> Iterable[Any]:
     if arg is None:
         return []
     if not isinstance(arg, _ITERABLE_SINGLE_VALUES) and hasattr(arg, "__iter__"):
-        return cast(Iterable[Any], arg)
+        return cast("Iterable[Any]", arg)
     return [arg]
 
 
-def load_object(path: Union[str, Callable[..., Any]]) -> Any:
+def load_object(path: str | Callable[..., Any]) -> Any:
     """Load an object given its absolute object path, and return it.
 
     The object can be the import path of a class, function, variable or an
@@ -91,7 +77,7 @@ def load_object(path: Union[str, Callable[..., Any]]) -> Any:
     return obj
 
 
-def walk_modules(path: str) -> List[ModuleType]:
+def walk_modules(path: str) -> list[ModuleType]:
     """Loads a module and all its submodules from the given module path and
     returns them. If *any* module throws an exception while importing, that
     exception is thrown back.
@@ -99,7 +85,7 @@ def walk_modules(path: str) -> List[ModuleType]:
     For example: walk_modules('scrapy.utils')
     """
 
-    mods: List[ModuleType] = []
+    mods: list[ModuleType] = []
     mod = import_module(path)
     mods.append(mod)
     if hasattr(mod, "__path__"):
@@ -123,13 +109,13 @@ def md5sum(file: IO[bytes]) -> str:
     """
     warnings.warn(
         (
-            "The scrapy.utils.misc.md5sum function is deprecated, and will be "
+            "The scrapy.utils.misc.md5sum function is deprecated and will be "
             "removed in a future version of Scrapy."
         ),
         ScrapyDeprecationWarning,
         stacklevel=2,
     )
-    m = hashlib.md5()  # nosec
+    m = hashlib.md5()  # noqa: S324
     while True:
         d = file.read(8096)
         if not d:
@@ -138,57 +124,17 @@ def md5sum(file: IO[bytes]) -> str:
     return m.hexdigest()
 
 
-def rel_has_nofollow(rel: Optional[str]) -> bool:
+def rel_has_nofollow(rel: str | None) -> bool:
     """Return True if link rel attribute has nofollow type"""
     return rel is not None and "nofollow" in rel.replace(",", " ").split()
 
 
-def create_instance(objcls, settings, crawler, *args, **kwargs):
-    """Construct a class instance using its ``from_crawler`` or
-    ``from_settings`` constructors, if available.
-
-    At least one of ``settings`` and ``crawler`` needs to be different from
-    ``None``. If ``settings `` is ``None``, ``crawler.settings`` will be used.
-    If ``crawler`` is ``None``, only the ``from_settings`` constructor will be
-    tried.
-
-    ``*args`` and ``**kwargs`` are forwarded to the constructors.
-
-    Raises ``ValueError`` if both ``settings`` and ``crawler`` are ``None``.
-
-    .. versionchanged:: 2.2
-       Raises ``TypeError`` if the resulting instance is ``None`` (e.g. if an
-       extension has not been implemented correctly).
-    """
-    warnings.warn(
-        "The create_instance() function is deprecated. "
-        "Please use build_from_crawler() or build_from_settings() instead.",
-        category=ScrapyDeprecationWarning,
-        stacklevel=2,
-    )
-
-    if settings is None:
-        if crawler is None:
-            raise ValueError("Specify at least one of settings and crawler.")
-        settings = crawler.settings
-    if crawler and hasattr(objcls, "from_crawler"):
-        instance = objcls.from_crawler(crawler, *args, **kwargs)
-        method_name = "from_crawler"
-    elif hasattr(objcls, "from_settings"):
-        instance = objcls.from_settings(settings, *args, **kwargs)
-        method_name = "from_settings"
-    else:
-        instance = objcls(*args, **kwargs)
-        method_name = "__new__"
-    if instance is None:
-        raise TypeError(f"{objcls.__qualname__}.{method_name} returned None")
-    return instance
-
-
 def build_from_crawler(
-    objcls: Type[T], crawler: Crawler, /, *args: Any, **kwargs: Any
+    objcls: type[T], crawler: Crawler, /, *args: Any, **kwargs: Any
 ) -> T:
-    """Construct a class instance using its ``from_crawler`` constructor.
+    """Construct a class instance using its ``from_crawler()`` or ``__init__()`` constructor.
+
+    .. versionadded:: 2.12
 
     ``*args`` and ``**kwargs`` are forwarded to the constructor.
 
@@ -197,35 +143,12 @@ def build_from_crawler(
     if hasattr(objcls, "from_crawler"):
         instance = objcls.from_crawler(crawler, *args, **kwargs)  # type: ignore[attr-defined]
         method_name = "from_crawler"
-    elif hasattr(objcls, "from_settings"):
-        instance = objcls.from_settings(crawler.settings, *args, **kwargs)  # type: ignore[attr-defined]
-        method_name = "from_settings"
     else:
         instance = objcls(*args, **kwargs)
         method_name = "__new__"
     if instance is None:
         raise TypeError(f"{objcls.__qualname__}.{method_name} returned None")
-    return cast(T, instance)
-
-
-def build_from_settings(
-    objcls: Type[T], settings: BaseSettings, /, *args: Any, **kwargs: Any
-) -> T:
-    """Construct a class instance using its ``from_settings`` constructor.
-
-    ``*args`` and ``**kwargs`` are forwarded to the constructor.
-
-    Raises ``TypeError`` if the resulting instance is ``None``.
-    """
-    if hasattr(objcls, "from_settings"):
-        instance = objcls.from_settings(settings, *args, **kwargs)  # type: ignore[attr-defined]
-        method_name = "from_settings"
-    else:
-        instance = objcls(*args, **kwargs)
-        method_name = "__new__"
-    if instance is None:
-        raise TypeError(f"{objcls.__qualname__}.{method_name} returned None")
-    return cast(T, instance)
+    return cast("T", instance)
 
 
 @contextmanager
@@ -250,7 +173,7 @@ def walk_callable(node: ast.AST) -> Iterable[ast.AST]:
     """Similar to ``ast.walk``, but walks only function body and skips nested
     functions defined within the node.
     """
-    todo: Deque[ast.AST] = deque([node])
+    todo: deque[ast.AST] = deque([node])
     walked_func_def = False
     while todo:
         node = todo.popleft()
@@ -265,7 +188,7 @@ def walk_callable(node: ast.AST) -> Iterable[ast.AST]:
 _generator_callbacks_cache = LocalWeakReferencedCache(limit=128)
 
 
-def is_generator_with_return_value(callable: Callable[..., Any]) -> bool:
+def is_generator_with_return_value(callable: Callable[..., Any]) -> bool:  # noqa: A002
     """
     Returns True if a callable is a generator function which includes a
     'return' statement with a value different than None, False otherwise
@@ -275,8 +198,8 @@ def is_generator_with_return_value(callable: Callable[..., Any]) -> bool:
 
     def returns_none(return_node: ast.Return) -> bool:
         value = return_node.value
-        return (
-            value is None or isinstance(value, ast.NameConstant) and value.value is None
+        return value is None or (
+            isinstance(value, ast.Constant) and value.value is None
         )
 
     if inspect.isgeneratorfunction(callable):
@@ -303,12 +226,15 @@ def is_generator_with_return_value(callable: Callable[..., Any]) -> bool:
 
 
 def warn_on_generator_with_return_value(
-    spider: Spider, callable: Callable[..., Any]
+    spider: Spider,
+    callable: Callable[..., Any],  # noqa: A002
 ) -> None:
     """
     Logs a warning if a callable is a generator function and includes
     a 'return' statement with a value different than None
     """
+    if not spider.settings.getbool("WARN_ON_GENERATOR_RETURN_VALUE"):
+        return
     try:
         if is_generator_with_return_value(callable):
             warnings.warn(

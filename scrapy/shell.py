@@ -6,15 +6,17 @@ See documentation in docs/topics/shell.rst
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 from itemadapter import is_item
 from twisted.internet import defer, threads
 from twisted.python import threadable
 from w3lib.url import any_to_uri
 
+import scrapy
 from scrapy.crawler import Crawler
 from scrapy.exceptions import IgnoreRequest
 from scrapy.http import Request, Response
@@ -23,36 +25,40 @@ from scrapy.spiders import Spider
 from scrapy.utils.conf import get_config
 from scrapy.utils.console import DEFAULT_PYTHON_SHELLS, start_python_console
 from scrapy.utils.datatypes import SequenceExclude
+from scrapy.utils.defer import _schedule_coro, deferred_f_from_coro_f
 from scrapy.utils.misc import load_object
 from scrapy.utils.reactor import is_asyncio_reactor_installed, set_asyncio_event_loop
 from scrapy.utils.response import open_in_browser
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 class Shell:
-    relevant_classes: Tuple[type, ...] = (Crawler, Spider, Request, Response, Settings)
+    relevant_classes: tuple[type, ...] = (Crawler, Spider, Request, Response, Settings)
 
     def __init__(
         self,
         crawler: Crawler,
-        update_vars: Optional[Callable[[Dict[str, Any]], None]] = None,
-        code: Optional[str] = None,
+        update_vars: Callable[[dict[str, Any]], None] | None = None,
+        code: str | None = None,
     ):
         self.crawler: Crawler = crawler
-        self.update_vars: Callable[[Dict[str, Any]], None] = update_vars or (
+        self.update_vars: Callable[[dict[str, Any]], None] = update_vars or (
             lambda x: None
         )
         self.item_class: type = load_object(crawler.settings["DEFAULT_ITEM_CLASS"])
-        self.spider: Optional[Spider] = None
+        self.spider: Spider | None = None
         self.inthread: bool = not threadable.isInIOThread()
-        self.code: Optional[str] = code
-        self.vars: Dict[str, Any] = {}
+        self.code: str | None = code
+        self.vars: dict[str, Any] = {}
 
     def start(
         self,
-        url: Optional[str] = None,
-        request: Optional[Request] = None,
-        response: Optional[Response] = None,
-        spider: Optional[Spider] = None,
+        url: str | None = None,
+        request: Request | None = None,
+        response: Response | None = None,
+        spider: Spider | None = None,
         redirect: bool = True,
     ) -> None:
         # disable accidental Ctrl-C key press from shutting down the engine
@@ -67,17 +73,16 @@ class Shell:
         else:
             self.populate_vars()
         if self.code:
-            print(eval(self.code, globals(), self.vars))  # nosec
+            # pylint: disable-next=eval-used
+            print(eval(self.code, globals(), self.vars))  # noqa: S307
         else:
-            """
-            Detect interactive shell setting in scrapy.cfg
-            e.g.: ~/.config/scrapy.cfg or ~/.scrapy.cfg
-            [settings]
-            # shell can be one of ipython, bpython or python;
-            # to be used as the interactive python console, if available.
-            # (default is ipython, fallbacks in the order listed above)
-            shell = python
-            """
+            # Detect interactive shell setting in scrapy.cfg
+            # e.g.: ~/.config/scrapy.cfg or ~/.scrapy.cfg
+            # [settings]
+            # # shell can be one of ipython, bpython or python;
+            # # to be used as the interactive python console, if available.
+            # # (default is ipython, fallbacks in the order listed above)
+            # shell = python
             cfg = get_config()
             section, option = "settings", "shell"
             env = os.environ.get("SCRAPY_PYTHON_SHELL")
@@ -94,37 +99,41 @@ class Shell:
                 self.vars, shells=shells, banner=self.vars.pop("banner", "")
             )
 
-    def _schedule(
-        self, request: Request, spider: Optional[Spider]
-    ) -> defer.Deferred[Any]:
+    def _schedule(self, request: Request, spider: Spider | None) -> defer.Deferred[Any]:
         if is_asyncio_reactor_installed():
             # set the asyncio event loop for the current thread
             event_loop_path = self.crawler.settings["ASYNCIO_EVENT_LOOP"]
             set_asyncio_event_loop(event_loop_path)
-        spider = self._open_spider(request, spider)
+
+        def crawl_request(_):
+            assert self.crawler.engine is not None
+            self.crawler.engine.crawl(request)
+
+        d2 = self._open_spider(request, spider)
+        d2.addCallback(crawl_request)
+
         d = _request_deferred(request)
         d.addCallback(lambda x: (x, spider))
-        assert self.crawler.engine
-        self.crawler.engine.crawl(request)
         return d
 
-    def _open_spider(self, request: Request, spider: Optional[Spider]) -> Spider:
+    @deferred_f_from_coro_f
+    async def _open_spider(self, request: Request, spider: Spider | None) -> None:
         if self.spider:
-            return self.spider
+            return
 
         if spider is None:
             spider = self.crawler.spider or self.crawler._create_spider()
 
         self.crawler.spider = spider
         assert self.crawler.engine
-        self.crawler.engine.open_spider(spider, close_if_idle=False)
+        await self.crawler.engine.open_spider_async(close_if_idle=False)
+        _schedule_coro(self.crawler.engine._start_request_processing())
         self.spider = spider
-        return spider
 
     def fetch(
         self,
-        request_or_url: Union[Request, str],
-        spider: Optional[Spider] = None,
+        request_or_url: Request | str,
+        spider: Spider | None = None,
         redirect: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -142,22 +151,18 @@ class Shell:
             else:
                 request.meta["handle_httpstatus_all"] = True
         response = None
-        try:
+        with contextlib.suppress(IgnoreRequest):
             response, spider = threads.blockingCallFromThread(
                 reactor, self._schedule, request, spider
             )
-        except IgnoreRequest:
-            pass
         self.populate_vars(response, request, spider)
 
     def populate_vars(
         self,
-        response: Optional[Response] = None,
-        request: Optional[Request] = None,
-        spider: Optional[Spider] = None,
+        response: Response | None = None,
+        request: Request | None = None,
+        spider: Spider | None = None,
     ) -> None:
-        import scrapy
-
         self.vars["scrapy"] = scrapy
         self.vars["crawler"] = self.crawler
         self.vars["item"] = self.item_class()
@@ -198,7 +203,7 @@ class Shell:
         b.append("  shelp()           Shell help (print this help)")
         b.append("  view(response)    View response in a browser")
 
-        return "\n".join(f"[s] {line}" for line in b)
+        return "\n".join(f"[s] {line}" for line in b) + "\n"
 
     def _is_relevant(self, value: Any) -> bool:
         return isinstance(value, self.relevant_classes) or is_item(value)

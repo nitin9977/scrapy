@@ -1,7 +1,6 @@
 import argparse
 import time
 from collections import defaultdict
-from typing import List
 from unittest import TextTestResult as _TextTestResult
 from unittest import TextTestRunner
 
@@ -14,8 +13,7 @@ from scrapy.utils.misc import load_object, set_environ
 class TextTestResult(_TextTestResult):
     def printSummary(self, start: float, stop: float) -> None:
         write = self.stream.write
-        # _WritelnDecorator isn't implemented in typeshed yet
-        writeln = self.stream.writeln  # type: ignore[attr-defined]
+        writeln = self.stream.writeln
 
         run = self.testsRun
         plural = "s" if run != 1 else ""
@@ -69,8 +67,9 @@ class Command(ScrapyCommand):
             help="print contract tests for all spiders",
         )
 
-    def run(self, args: List[str], opts: argparse.Namespace) -> None:
+    def run(self, args: list[str], opts: argparse.Namespace) -> None:
         # load contracts
+        assert self.settings is not None
         contracts = build_component_list(self.settings.getwithbase("SPIDER_CONTRACTS"))
         conman = ContractsManager(load_object(c) for c in contracts)
         runner = TextTestRunner(verbosity=2 if opts.verbose else 1)
@@ -82,10 +81,14 @@ class Command(ScrapyCommand):
         assert self.crawler_process
         spider_loader = self.crawler_process.spider_loader
 
+        async def start(self):
+            for request in conman.from_spider(self, result):
+                yield request
+
         with set_environ(SCRAPY_CHECK="true"):
             for spidername in args or spider_loader.list():
                 spidercls = spider_loader.load(spidername)
-                spidercls.start_requests = lambda s: conman.from_spider(s, result)
+                spidercls.start = start  # type: ignore[assignment,method-assign,return-value]
 
                 tested_methods = conman.tested_methods_from_spidercls(spidercls)
                 if opts.list:
@@ -103,10 +106,10 @@ class Command(ScrapyCommand):
                     for method in sorted(methods):
                         print(f"  * {method}")
             else:
-                start = time.time()
+                start_time = time.time()
                 self.crawler_process.start()
                 stop = time.time()
 
                 result.printErrors()
-                result.printSummary(start, stop)
+                result.printSummary(start_time, stop)
                 self.exitcode = int(not result.wasSuccessful())

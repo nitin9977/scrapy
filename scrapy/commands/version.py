@@ -1,13 +1,13 @@
 import argparse
-from typing import List
 
 import scrapy
 from scrapy.commands import ScrapyCommand
-from scrapy.utils.versions import scrapy_components_versions
+from scrapy.utils.versions import get_versions
 
 
 class Command(ScrapyCommand):
-    default_settings = {"LOG_ENABLED": False, "SPIDER_LOADER_WARN_ONLY": True}
+    requires_crawler_process = False
+    default_settings = {"LOG_ENABLED": False}
 
     def syntax(self) -> str:
         return "[-v]"
@@ -25,9 +25,9 @@ class Command(ScrapyCommand):
             help="also display twisted/python/platform info (useful for bug reports)",
         )
 
-    def run(self, args: List[str], opts: argparse.Namespace) -> None:
+    def run(self, args: list[str], opts: argparse.Namespace) -> None:
         if opts.verbose:
-            versions = scrapy_components_versions()
+            versions = get_versions()
             width = max(len(n) for (n, _) in versions)
             for name, version in versions:
                 print(f"{name:<{width}} : {version}")
